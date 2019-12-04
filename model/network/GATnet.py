@@ -4,16 +4,17 @@ import numpy as np
 from torch.autograd import Variable
 import cv2
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 
 from .basic_blocks import SetBlock, BasicConv2d
 
 class Base(nn.Module):
-	def __init__(self, hidden_dim,_set_channels = [32, 64, 128]):
+	def __init__(self, hidden_dim, _set_in_channels = 1, _set_channels = [32, 64, 128]):
 		super(Base, self).__init__()
 		self.hidden_dim = hidden_dim
 		self.batch_frame = None
 
-		_set_in_channels = 1
+		# _set_in_channels = 1
 		
 		self.set_layer1 = SetBlock(BasicConv2d(_set_in_channels, _set_channels[0], 5, padding=2))
 		self.set_layer2 = SetBlock(BasicConv2d(_set_channels[0], _set_channels[0], 3, padding=1), True)
@@ -147,59 +148,57 @@ def RFbox(x, index):
 	return RoIs	
 
 def hard_RFbox(px):
-	B, rank, xy = px.size()
+	B, t, rank, xy = px.size()
 	bh=14
 	bw=14
-	RoIs = torch.zeros(B,rank,5)
+	RoIs = torch.zeros(B,t,rank,5)
 	for i in range(B):
-		for j in range(rank):
-			#print([pos1,pos2])
-			x1=px[i][j][0]-bw/2
-			if(x1<0):
-				x1=0
-			y1=px[i][j][1]-bh/2
-			if(y1<0):
-				y1=0
-			x2=px[i][j][0]+bw/2
-			if(x2<0):
-				x2=x1+1
-			y2=px[i][j][1]+bh/2
-			if(y2<0):
-				y2=y1+1			
-			RoIs[i,j,:]=torch.Tensor([i, x1, y1, x2, y2])	# (index,x1,y1,x2,y2)
+		for j in range(t):
+			for k in range(rank):
+				#print([pos1,pos2])
+				x1=px[i][j][k][0]-bw/2
+				if(x1<0):
+					x1=0
+				y1=px[i][j][k][1]-bh/2
+				if(y1<0):
+					y1=0
+				x2=px[i][j][k][0]+bw/2
+				if(x2<0):
+					x2=x1+1
+				y2=px[i][j][k][1]+bh/2
+				if(y2<0):
+					y2=y1+1			
+				RoIs[i,j,k,:]=torch.Tensor([i, x1, y1, x2, y2])	# (index,x1,y1,x2,y2)
 	
 	return RoIs	
 
 def ROI(x,RoIs,rw,rh):
-	B, S, C, h, w = x.size()
-	x = x.view(B, S*C, h, w)
-	Br, rank, n = RoIs.size()	#Br=B
-	new_x = torch.zeros(B, rank, S*C, rw, rh).cuda()
+	B, t, c, h, w = x.size()
+	# x = x.view(B, S*C, h, w)
+	Br, t, rank, n = RoIs.size()	#Br=B
+	new_x = torch.zeros(B, t, rank, c, rh, rw).cuda()
 	new_x = Variable(new_x)
 	for i in range(B):
-		#tmp = torch.zeros(rank, C, 70, 70)
-		for j in range(rank):
-			pos = RoIs[i,j]
-			for k in range(1,5):
-				if(pos[k]<0):
-					pos[k]=0
-			#print(pos)
-			#print(x.size())
-			ima = x[i,:,int(pos[1]):int(pos[3]),int(pos[2]):int(pos[4])]
-			#print(ima.size())
-			ima=ima.permute(1,2,0).contiguous()
-			#print(ima.size())
-			ima = ima.data.cpu().numpy()
-			#print(ima.shape)
-			reima = cv2.resize(ima,(rh, rw))
-			#print(reima.shape)
-			reima = Variable(torch.from_numpy(reima).cuda())
-			reima=reima.permute(2,0,1).contiguous()
-			new_x[i,j] = 	reima
-			#print(tmp.size())
-			
-	new_x = new_x.view(B,rank,S,C, rw, rh)
-	new_x = new_x.view(B*rank, S, C, rw, rh)
+		for j in range(t):
+			for k in range(rank):
+
+				pos = RoIs[i,j,k]
+				for k1 in range(1,5):
+					if(pos[k1]<0):
+						pos[k1]=0
+				# print(x[i,j,:].size)
+				ima = x[i,j,:,int(pos[2]):int(pos[4]),int(pos[1]):int(pos[3])]
+				ima=ima.permute(1,2,0).contiguous()
+				ima = ima.data.cpu().numpy()
+				# print(pos)
+				# print(ima.shape)
+				reima = cv2.resize(ima,(rw, rh))
+				reima = Variable(torch.from_numpy(reima).cuda())
+				# reima=reima.permute(2,0,1).contiguous()
+				new_x[i,j,k,0] = reima
+		
+	# new_x = new_x.view(B,rank,S,C, rw, rh)
+	# new_x = new_x.view(B*rank, S, C, rw, rh)
 	return new_x
 
 def create_adj(frames, rank):
@@ -713,17 +712,19 @@ class RGPNet(nn.Module):
 	"""
 	input_size(3,128,128) 
 	"""
-	def __init__(self, hidden_dim):
+	def __init__(self, hidden_dim, _set_in_channels=1):
 		super(RGPNet, self).__init__()
 
 		self.hidden_dim = hidden_dim
 		self.batch_frame = None
 		
-		self.base = Base(hidden_dim);
+		self.base = Base(hidden_dim, _set_in_channels);
 		self.gat = GAT(nfeat=256, nhid=8, nclass=16, dropout=0.6, nheads=1,alpha = 0.2)
 		self.drop = nn.Dropout(p=0.5) 
-		self.fc_g = nn.Linear(128 * 16 * 11, 256)  
-		self.fc_l = nn.Linear(128*8*8, 256)  
+		self.fc_g = nn.Linear(128 * 24 * 32, 256)  
+		self.fc_l = nn.Linear(128 * 3 * 3, 256)  
+		# self.fc_cls = nn.Linear(528, 500)
+
 		
 		self.bin_num = [1, 2, 4, 8, 16]
 		self.fc_bin = nn.ParameterList([
@@ -754,8 +755,16 @@ class RGPNet(nn.Module):
 			arg_max_list = torch.cat([_tmp[i][1] for i in range(len(_tmp))], 0)
 			return max_list, arg_max_list
 
-	def forward(self, silho, px, batch_frame=None):
+	def forward(self, x, px, batch_frame=None):
 		# n: batch_size, s: frame_num, k: keypoints_num, c: channel
+		# import psutil
+		# info = psutil.virtual_memory()
+		# print('内存使用3-1：',info.used)
+		# print('总内存：',info.total)
+		# print('内存空闲：',info.free)
+		# print('内存可用：',info.available)
+		# print('内存占比：',info.percent)
+
 		if batch_frame is not None:
 			batch_frame = batch_frame[0].data.cpu().numpy().tolist()
 			_ = len(batch_frame)
@@ -769,47 +778,63 @@ class RGPNet(nn.Module):
 			if frame_sum < silho.size(1):
 				silho = silho[:, :frame_sum, :, :]
 			self.batch_frame = [0] + np.cumsum(batch_frame).tolist()
-		n = silho.size(0)
-		x = silho.unsqueeze(2)
-		del silho
-
+		# n = silho.size(0)
+		x = x.unsqueeze(2)
+		# del silho
+		# batch, t, 1, h, w = silho.size()
 		g_x = self.base(x)
+		# print(g_x.size())
 		g_x = self.frame_max(g_x)[0]
 		
-		print(px.size())
-		batch, t, rank, xy = px.size()
-		px = px.view(batch*t, rank, xy)
+		B, t, rank, xy = px.size()
+		# px = px.view(batch*t, rank, xy)
 		RoIs = hard_RFbox(px)
 		#RoIs = RFbox(g_x, 0)
-		
-		B, rank, n = RoIs.size()
-		l_x = ROI(x,RoIs,14,14)
-		#print(RoIs[0:100]) #[34,34]
-		#l_x = ROI(x,RoIs)
-		Br, S, c, h, w=l_x.size()
+		# print(RoIs.size())
+		# B, rank, n = RoIs.size() #B,t,rank,5
+		l_x = ROI(x,RoIs,14,14) #B, t, rank, c, rh, rw
+
+		B, t, rank, c, h, w = l_x.size()
+		l_x = l_x.view(B*t, rank, c, h, w)
 		l_x = self.base(l_x)
-		l_x = l_x.view(Br*S, -1)
+		# print(l_x.size())
+		l_x = l_x.view(B*t*rank, -1)
 		l_fc = self.fc_l(l_x)
-		l_fc = l_fc.view(B, S*rank, -1)
+		l_fc = l_fc.view(B, t*rank, -1)
 		
-		g_x = g_x.view(g_x.size(0), -1)
+		# print(g_x.size())
+		g_x = g_x.view(B, -1)
 		g_fc = self.fc_g(g_x)
 
-		gat_fc = torch.zeros(B,S*rank,16).cuda()
+		gat_fc = torch.zeros(B,t*rank,16).cuda()
 		gat_fc = Variable(gat_fc)
-		adj = create_adj2(S, rank)
+		adj = create_adj2(t, rank)
 		for i in range(B):
 			gat_fc[i] = self.gat(l_fc[i], adj)
 
 
 		l_fc = torch.cat([l_fc,gat_fc],2) 
-		l_fc = torch.max(l_fc, 1)[0]		
+		# print(l_fc.size())
+		l_fc = torch.max(l_fc, 1)[0]
+		# print(l_fc.size())		
 		feature = torch.cat([g_fc, l_fc],1)	
 		#feature = g_fc
-		#print(feature.size())
+		# print(feature.size())
 		feature = feature.unsqueeze(1)
-		#print(feature.size())
-		
+		# print(feature.size())
+
+		# del x,px,g_x,l_x,g_fc,l_fc
+		# torch.cuda.empty_cache()
+
+		# info = psutil.virtual_memory()
+		# print('内存使用3-2：',info.used)
+		# print('总内存：',info.total)
+		# print('内存空闲：',info.free)
+		# print('内存可用：',info.available)
+		# print('内存占比：',info.percent)
+			
+		# out = self.fc_cls(feature)	
+
 		return feature, None
 		
 class SF1Net(nn.Module):

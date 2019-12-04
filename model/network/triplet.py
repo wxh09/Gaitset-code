@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+from torch.autograd import Variable
 
 
 class TripletLoss(nn.Module):
@@ -12,13 +14,26 @@ class TripletLoss(nn.Module):
     def forward(self, feature, label):
         # feature: [n, m, d], label: [n, m]
         n, m, d = feature.size()
+
+        # hp_mask = np.eye(m, dtype=bool)
+        # hp_mask = np.tile(hp_mask,(n,1,1)) 
+        # hn_mask = ~hp_mask
+
+        # hp_mask = self.np2var(hp_mask).byte().view(-1)
+        # hn_mask = self.np2var(hn_mask).byte().view(-1)
+        
         hp_mask = (label.unsqueeze(1) == label.unsqueeze(2)).byte().view(-1)
         hn_mask = (label.unsqueeze(1) != label.unsqueeze(2)).byte().view(-1)
 
+        # print(label)
+        # print(hp_mask)
+        # print(hn_mask)
         dist = self.batch_dist(feature)
         mean_dist = dist.mean(1).mean(1)
         dist = dist.view(-1)
         # hard
+        # print(torch.masked_select(dist, hp_mask).size())
+        # print(torch.masked_select(dist, hn_mask).size())
         hard_hp_dist = torch.max(torch.masked_select(dist, hp_mask).view(n, m, -1), 2)[0]
         hard_hn_dist = torch.min(torch.masked_select(dist, hn_mask).view(n, m, -1), 2)[0]
         hard_loss_metric = F.relu(self.margin + hard_hp_dist - hard_hn_dist).view(n, -1)
@@ -43,3 +58,9 @@ class TripletLoss(nn.Module):
         dist = x2.unsqueeze(2) + x2.unsqueeze(2).transpose(1, 2) - 2 * torch.matmul(x, x.transpose(1, 2))
         dist = torch.sqrt(F.relu(dist))
         return dist
+
+    def ts2var(self, x):
+        return Variable(x).cuda()
+
+    def np2var(self, x):
+        return self.ts2var(torch.from_numpy(x))
