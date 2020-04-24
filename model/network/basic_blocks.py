@@ -26,3 +26,23 @@ class SetBlock(nn.Module):
             x = self.pool2d(x)
         _, c, h, w = x.size()
         return x.view(n, s, c, h ,w)
+
+class HPM(nn.Module):
+    def __init__(self, in_dim, out_dim, bin_level_num=5):
+        super(HPM, self).__init__()
+        self.bin_num = [2**i for i in range(bin_level_num)]
+        self.fc_bin = nn.ParameterList([
+            nn.Parameter(
+                nn.init.xavier_uniform(
+                    torch.zeros(sum(self.bin_num), in_dim, out_dim)))])
+    def forward(self, x):
+        feature = list()
+        n, c, h, w = x.size()
+        for num_bin in self.bin_num:
+            z = x.view(n, c, num_bin, -1)
+            z = z.mean(3)+z.max(3)[0]
+            feature.append(z)
+        feature = torch.cat(feature, 2).permute(2, 0, 1).contiguous()
+        
+        feature = feature.matmul(self.fc_bin[0])
+        return feature.permute(1, 0, 2).contiguous()

@@ -7,8 +7,8 @@ from copy import deepcopy
 import numpy as np
 
 from .utils import load_data,load_OU_data
-from .model import Model
-from .utils.Loader import BPEI_Dataset
+from .model import Model,PoseModel
+from .utils.Loader import GAIT_Dataset
 
 
 def initialize_data(config, train=False, test=False):
@@ -17,17 +17,17 @@ def initialize_data(config, train=False, test=False):
 	# print(train_source)
 	data_config = config['data']
 	if train:
-		train_source = BPEI_Dataset(txtlist=data_config['train_list'], 
-			posedata_dir=data_config['posedata_dir'], silhdata_dir=data_config['silhdata_dir'], 
-			spid=0, pid_num=data_config['train_pid'], 
+		train_source = GAIT_Dataset(dataset=data_config['dataset'], txtlist=data_config['train_list'], 
+			posedata_dir=data_config['posedata_dir'], silhdata_dir=data_config['silhdata_dir'],
+			ofdata_dir=data_config['ofdata_dir'], spid=0, pid_num=data_config['train_pid'],
 			frame_num=data_config['frame_num'])		
 		test_source = None
 	# 	print("Loading training data...")
 	# 	train_source.load_all_data()
 	if test:
-		test_source = BPEI_Dataset(txtlist=data_config['test_list'], 
+		test_source = GAIT_Dataset(dataset=data_config['dataset'], txtlist=data_config['test_list'], 
 			posedata_dir=data_config['posedata_dir'], silhdata_dir=data_config['silhdata_dir'], 
-			spid=data_config['train_pid'], pid_num=data_config['train_pid']+data_config['test_pid'], 
+			ofdata_dir=data_config['ofdata_dir'], spid=data_config['train_pid'], pid_num=data_config['train_pid']+data_config['test_pid'],
 			frame_num=data_config['frame_num'])	
 		train_source = None
 	# 	print("Loading test data...")
@@ -41,8 +41,10 @@ def initialize_model(config, train_source, test_source):
 	data_config = config['data']
 	model_config = config['model']
 	model_param = deepcopy(model_config)
+
 	model_param['train_source'] = train_source
 	model_param['test_source'] = test_source
+	model_param['dataset'] = data_config['dataset']
 	model_param['train_pid_num'] = data_config['train_pid']
 	batch_size = int(np.prod(model_config['batch_size']))
 	model_param['save_name'] = '_'.join(map(str,[
@@ -57,7 +59,10 @@ def initialize_model(config, train_source, test_source):
 		model_config['frame_num'],
 	]))
 
-	m = Model(**model_param)
+	if config['type'] == 'silh':
+		m = Model(**model_param)
+	elif config['type'] == 'pose':
+		m = PoseModel(**model_param)
 	print("Model initialization complete.")
 	return m, model_param['save_name']
 

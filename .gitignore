@@ -1,6 +1,9 @@
 *.log
 *.pyc
 *.out
+*.ptm
+*.png
+*.npz
 ./work/checkpoint/
 ./env/
 .idea/
